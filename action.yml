@@ -1,0 +1,81 @@
+name: "docrot-check"
+description: "Scan README/docs for dead image references (broken external images, missing in-repo files) directly in CI."
+author: "Aurora (auroraxo)"
+branding:
+  icon: "image"
+  color: "red"
+
+inputs:
+  root:
+    description: "Repository root to scan, relative to the workspace."
+    default: "."
+  fail-on-broken:
+    description: "Exit non-zero when a broken reference is found (true) or only report (false)."
+    default: "false"
+  report-path:
+    description: "Path (relative to the workspace) where the JSON report is written."
+    default: "docrot-report.json"
+  upload-report:
+    description: "Upload the JSON report as a workflow artifact named docrot-report."
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Check out docrot (scanner)
+      uses: actions/checkout@v4
+      with:
+        repository: auroraxo/docrot
+        ref: main
+        path: .docrot-tool
+        persist-credentials: false
+
+    - name: Run docrot scan
+      id: scan
+      shell: bash
+      run: |
+        set -uo pipefail
+        args=()
+        if [ "${{ inputs.fail-on-broken }}" = "true" ]; then
+          args+=(--fail-on-broken)
+        fi
+        python3 .docrot-tool/scan_local.py "${{ inputs.root }}" "${{ inputs.report-path }}" "${args[@]+"${args[@]}"}"
+        status=$?
+        # Surface the headline numbers on the step summary and in outputs.
+        python3 - "${{ inputs.report-path }}" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+        import json, sys
+        s = json.load(open(sys.argv[1]))
+        print("## docrot-check")
+        print("")
+        print("| metric | value |")
+        print("| --- | --- |")
+        for k in ("markdownFilesScanned", "imageRefs", "uniqueImages", "externalThirdParty",
+                  "externalThirdPartyBroken", "missingInRepo", "unresolvable", "brokenTotal"):
+            print("| %s | %s |" % (k, s.get(k)))
+        broken = s.get("images", [])
+        dead = [i for i in broken if i.get("broken")]
+        if dead:
+            print("")
+            print("**Broken references:**")
+            for i in dead:
+                loc = ", ".join(f"`{p}`" for p, _ in i.get("refs", []))
+                print(f"- `{i['target']}` ({loc})")
+        PY
+        {
+          echo "report-path=${{ inputs.report-path }}"
+          echo "broken-total=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('brokenTotal',0))" "${{ inputs.report-path }}")"
+        } >> "$GITHUB_OUTPUT"
+        exit $status
+
+    - name: Upload report
+      if: inputs.upload-report == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: docrot-report
+        path: ${{ inputs.report-path }}
+        if-no-files-found: ignore

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Dogfood the action inside its own repo: scan a fixture that deliberately
+  # contains one dead external image and one missing in-repo image, and assert
+  # the action reports both without failing (default is warn-only).
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run docrot-check on the fixture (warn mode)
+        id: check
+        uses: ./
+        with:
+          root: testdata/rot
+          report-path: report.json
+          upload-report: "false"
+
+      - name: Assert both dead references were detected
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          s = json.load(open("report.json"))
+          assert s["externalThirdPartyBroken"] >= 1, s
+          assert s["missingInRepo"] >= 1, s
+          print("brokenTotal =", s["brokenTotal"])
+          PY
+          test "${{ steps.check.outputs.broken-total }}" != "0"
+
+  # Same scan with fail-on-broken must exit non-zero on the rot fixture.
+  fail-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run docrot-check on the fixture (fail mode)
+        id: check
+        uses: ./
+        continue-on-error: true
+        with:
+          root: testdata/rot
+          report-path: report.json
+          fail-on-broken: "true"
+          upload-report: "false"
+
+      - name: Assert the gate went red
+        run: |
+          if [ "${{ steps.check.outcome }}" != "failure" ]; then
+            echo "expected failure, got ${{ steps.check.outcome }}"
+            exit 1
+          fi
