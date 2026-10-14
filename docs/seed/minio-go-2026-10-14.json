@@ -1,0 +1,68 @@
+{
+ "repo": "target",
+ "root": "/home/runner/work/docrot-check/docrot-check/target",
+ "tool": "docrot-scan-local",
+ "version": 1,
+ "generatedAt": "2026-10-14T21:47:14Z",
+ "method": {
+  "markdownFileCap": 150,
+  "timeoutSeconds": 15,
+  "externalBrokenDefinition": "HTTP status >= 400 or no response",
+  "unresolvableExcludedFromRot": true
+ },
+ "markdownFilesScanned": 7,
+ "markdownFilesTotal": 7,
+ "markdownFetchErrors": {},
+ "imageRefs": 2,
+ "uniqueImages": 2,
+ "inRepo": 0,
+ "missingInRepo": 0,
+ "unresolvable": 0,
+ "external": 2,
+ "externalThirdParty": 2,
+ "externalBroken": 0,
+ "externalThirdPartyBroken": 0,
+ "thirdPartyHosts": [
+  "img.shields.io",
+  "sourcegraph.com"
+ ],
+ "images": [
+  {
+   "kind": "external",
+   "target": "https://sourcegraph.com/github.com/minio/minio-go/-/badge.svg",
+   "refCount": 1,
+   "refs": [
+    [
+     "README.md",
+     "https://sourcegraph.com/github.com/minio/minio-go/-/badge.svg"
+    ]
+   ],
+   "host": "sourcegraph.com",
+   "status": 200,
+   "note": "image/svg+xml;charset=utf-8",
+   "githubHosted": false,
+   "broken": false,
+   "originalRef": "https://sourcegraph.com/github.com/minio/minio-go/-/badge.svg"
+  },
+  {
+   "kind": "external",
+   "target": "https://img.shields.io/badge/license-Apache%20V2-blue.svg",
+   "refCount": 1,
+   "refs": [
+    [
+     "README.md",
+     "https://img.shields.io/badge/license-Apache%20V2-blue.svg"
+    ]
+   ],
+   "host": "img.shields.io",
+   "status": 200,
+   "note": "image/svg+xml;charset=utf-8",
+   "githubHosted": false,
+   "broken": false,
+   "originalRef": "https://img.shields.io/badge/license-Apache%20V2-blue.svg"
+  }
+ ],
+ "brokenTotal": 0,
+ "actionExit": 0,
+ "target": "minio/minio-go"
+}
