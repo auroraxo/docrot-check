@@ -1,0 +1,125 @@
+name: weekly-docs-rot
+
+# Hosted docs-rot scanner (Schritt-3 MVP, card 1073835b).
+#
+# Twice a week (+ manual dispatch) this workflow scans every target in
+# .github/docrot-targets.txt with the composite action in this repository and
+# opens ONE labelled issue per target that shows dead image references, with
+# canonical evidence: scan timestamp, tool version, per-finding HTTP status or
+# missing-file proof, and the markdown file each reference lives in.
+#
+# Negative test contract: a target with brokenTotal == 0 opens no issue. A
+# target whose scan fails opens no issue either (decision job only runs when
+# every scan leg succeeded) — no findings are ever inferred from a failed run.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4"   # Mon+Thu 06:17Z (2x/week, off the 00/12 mark)
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Target list override, one owner/repo per line. Empty = .github/docrot-targets.txt"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.set.outputs.repos }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: set
+        env:
+          OVERRIDE: ${{ github.event.inputs.targets }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OVERRIDE:-}" ]; then
+            LIST="$OVERRIDE"
+          else
+            LIST="$(grep -Ev '^[[:space:]]*(#|$)' .github/docrot-targets.txt || true)"
+          fi
+          REPOS="$(printf '%s\n' "$LIST" | python3 -c 'import json,sys; print(json.dumps(sorted({l.strip() for l in sys.stdin if l.strip()})))')"
+          echo "repos=$REPOS" >> "$GITHUB_OUTPUT"
+          echo "targets: $REPOS"
+
+  scan:
+    needs: plan
+    if: needs.plan.outputs.repos != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: ${{ fromJSON(needs.plan.outputs.repos) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out target repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          path: target
+          fetch-depth: 1
+
+      # Warn-only: rot must not fail the scan leg, it is decided downstream.
+      - name: Run docrot-check against target
+        uses: ./
+        with:
+          root: target
+          report-path: report.json
+          upload-report: "false"
+          fail-on-broken: "false"
+
+      - name: Stamp target into report
+        env:
+          TARGET: ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          r = json.load(open("report.json"))
+          r["target"] = os.environ["TARGET"]
+          json.dump(r, open("report.json", "w"), indent=1)
+          print("target=%s brokenTotal=%s" % (r["target"], r.get("brokenTotal")))
+          PY
+
+      # Artifact names cannot contain "/", so key on job index; the report
+      # itself carries the target field.
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: docrot-report-${{ strategy.job-index }}
+          path: report.json
+          if-no-files-found: error
+
+  decide:
+    needs: [plan, scan]
+    if: always() && needs.scan.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: docrot-report-*
+          merge-multiple: true
+          path: reports
+
+      - name: Open issues for targets with new rot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh label create docs-rot \
+            --repo "$GH_REPO" \
+            --color b60205 \
+            --description "Automated weekly docs-rot findings" 2>/dev/null || true
+          python3 scripts/open_rot_issues.py reports/

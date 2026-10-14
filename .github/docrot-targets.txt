@@ -1,0 +1,3 @@
+# docrot-check weekly scan targets (one owner/repo per line).
+# Seed = minio/minio-go, chosen in the 2026-10 shortlist (recommendation A).
+minio/minio-go
