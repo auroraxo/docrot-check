@@ -31,7 +31,9 @@ runs:
       uses: actions/checkout@v4
       with:
         repository: auroraxo/docrot
-        ref: main
+        # Immutable SHA pin (rev of docrot main at first adoption PR review);
+        # mutable refs would let a scanner update run without a workflow change.
+        ref: 4d1ec6fbb1c82bf8f6488aa98f2c44dd5b4ffa5f
         path: .docrot-tool
         persist-credentials: false
 
