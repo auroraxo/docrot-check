@@ -77,7 +77,63 @@ def build_body(report, run_id):
         "way to refresh; close with `not-rot` if the finding is actually",
         "unresolvable (template placeholders, docs-site root-relatives).",
     ])
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    # GitHub caps issue bodies at 65,536 characters (GraphQL createIssue).
+    # A full report can be >100KB (nocodb: 135KB), so when the body is over
+    # the limit, swap the embedded raw report for a trimmed variant: broken
+    # findings only first, summary only second, then an honest truncation
+    # marker. The scan artifact remains the full source of truth either way.
+    limit = 65_000
+    if len(body) > limit:
+        body = trim_block(lines, limit)
+        if len(body) > limit:
+            marker = "\n<!-- body truncated by open_rot_issues.py; see run artifact -->\n"
+            body = body[: limit - len(marker)] + marker
+    return body
+
+
+def trim_block(lines, limit):
+    """Rebuild lines with the fenced raw-report block replaced by a smaller
+    variant (broken findings only, then summary only). Returns the joined body."""
+    out = lines[:]
+    # locate the fenced json block
+    try:
+        start = out.index("```json")
+    except ValueError:
+        return "\n".join(out)
+    end = out.index("```", start + 1)
+    block_lines = out[start + 1:end]
+    raw = "\n".join(block_lines)
+    try:
+        report = json.loads(raw)
+    except ValueError:
+        return "\n".join(out)
+    head = out[:start]
+    tail = out[end + 1:]
+    variants = [
+        report_broken_only(report),
+        report_summary(report),
+    ]
+    for v in variants:
+        candidate = head + [json.dumps(v, indent=1)] + tail
+        joined = "\n".join(candidate)
+        if len(joined) <= limit:
+            return joined
+    # Last resort: summary without images at all, then hard truncation by caller.
+    return "\n".join(head + [json.dumps(report_summary(report), indent=1)] + tail)
+
+
+def report_broken_only(report):
+    r = dict(report)
+    r["images"] = [i for i in report.get("images", []) if i.get("broken")]
+    r["trimmed"] = "full images[] omitted; broken findings only"
+    return r
+
+
+def report_summary(report):
+    return {k: v for k, v in report.items() if k != "images"} | {
+        "trimmed": "images[] omitted; see run artifact for the full report"
+    }
 
 
 def build_title(target, broken_total):
