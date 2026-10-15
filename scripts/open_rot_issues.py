@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 """open_rot_issues.py — turn downloaded docrot-check reports into labelled issues.
 
-Contract: open at most one issue per target per workflow run. A target is
-"newly rotten" when brokenTotal >= 1. Findings are serialised to a fenced
-`json` block so a human or downstream tool can parse them back out. The
-issue body is built from the per-finding evidence in the report (HTTP status,
-host, markdown ref, kind) and is intentionally short — a fix PR is the
-follow-up, not a wall of evidence.
+Contract: open at most one open issue per target per repo at a time. A target
+is "newly rotten" when brokenTotal >= 1 AND no open `docs-rot`-labelled issue
+already exists for that target. Findings are serialised to a fenced `json`
+block so a human or downstream tool can parse them back out. The issue body
+is built from the per-finding evidence in the report (HTTP status, host,
+markdown ref, kind) and is intentionally short — a fix PR is the follow-up,
+not a wall of evidence.
 
-Idempotency: the workflow label `docs-rot` plus the run-id is enough to make
-runs visible to humans; opening is rate-bounded by the 2x/week schedule.
-Re-runs of the same workflow run (e.g. retrying the decide job) will only
-open a fresh issue if a previous attempt was killed before the issue opened,
-which is the safe default. Daily-run noise protection is the caller's job.
+Idempotency: before opening, we list currently-open `docs-rot` issues in the
+target repo and skip any target that already has one open. This makes the
+scheduled 2x/week cron safe to run against a target list: the first positive
+scan opens the issue, subsequent positive runs only re-open once the
+previous one is closed. Daily-run noise protection is still the caller's
+job (we still only run 2x/week). To force a refresh, close the existing
+issue and re-dispatch; the scanner will open a new one.
 """
 import json
 import os
 import subprocess
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 
@@ -31,6 +35,39 @@ def gh(args, env=None):
 
 def short_sha(target):
     return target.replace("/", "-")
+
+
+def open_docs_rot_targets(repo):
+    """Return the set of targets (owner/repo) that already have an OPEN
+    `docs-rot`-labelled issue in the given repo. Used to dedup before we
+    open a new one. We match on the issue title prefix `docs-rot: <sha>-`
+    which is the same shape `build_title` produces. Closed issues do not
+    block — closing is the explicit "start over" signal."""
+    out = gh([
+        "issue", "list",
+        "--repo", repo,
+        "--label", "docs-rot",
+        "--state", "open",
+        "--limit", "100",
+        "--json", "title",
+    ])
+    try:
+        issues = json.loads(out)
+    except ValueError:
+        return set()
+    tracked = set()
+    prefix = "docs-rot: "
+    for it in issues:
+        title = it.get("title", "")
+        if not title.startswith(prefix):
+            continue
+        # docs-rot: owner-repo — N dead reference(s)
+        # We want the "owner-repo" portion as the dedup key.
+        rest = title[len(prefix):]
+        sha = rest.split(" — ", 1)[0].strip()
+        if sha:
+            tracked.add(sha)
+    return tracked
 
 
 def build_body(report, run_id):
@@ -73,8 +110,9 @@ def build_body(report, run_id):
         json.dumps(report, indent=1),
         "```",
         "",
-        "Bot opens at most one issue per target per run. Re-run is the manual",
-        "way to refresh; close with `not-rot` if the finding is actually",
+        "Bot opens at most one OPEN `docs-rot` issue per target per repo. ",
+        "Subsequent positive runs are a no-op while that issue is open; ",
+        "close it to refresh. Use `not-rot` if the finding is actually ",
         "unresolvable (template placeholders, docs-site root-relatives).",
     ])
     body = "\n".join(lines)
@@ -150,8 +188,21 @@ def main():
         print(f"no reports in {reports_dir}")
         return
     run_id = os.environ.get("GITHUB_RUN_ID") or "local"
+    host_repo = os.environ.get("GH_REPO", "auroraxo/docrot-check")
+    # Resolve the set of targets that already have an open docs-rot issue
+    # in the host repo so we don't spam duplicates on recurring positive
+    # scans. The list is computed once per decide job; the API call is a
+    # single `gh issue list` (capped at 100, well above our target count).
+    try:
+        already_tracked = open_docs_rot_targets(host_repo)
+    except subprocess.CalledProcessError as e:
+        # If gh fails (auth, network), do not silently open everything —
+        # abort so the run surfaces the error and retries next cycle.
+        print(f"error: could not list open docs-rot issues: {e}", file=sys.stderr)
+        sys.exit(1)
     for p in files:
-        report = json.load(open(p))
+        with closing(open(p)) as fh:
+            report = json.load(fh)
         target = report.get("target") or "?"
         broken = report.get("brokenTotal", 0)
         if not target or target == "?":
@@ -159,6 +210,10 @@ def main():
             continue
         if broken < 1:
             print(f"skip {target}: brokenTotal=0 (negativtest passed)")
+            continue
+        sha = short_sha(target)
+        if sha in already_tracked:
+            print(f"skip {target}: open docs-rot issue already exists (sha={sha})")
             continue
         body = build_body(report, run_id)
         title = build_title(target, broken)

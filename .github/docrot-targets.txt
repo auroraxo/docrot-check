@@ -1,3 +1,13 @@
 # docrot-check weekly scan targets (one owner/repo per line).
 # Seed = minio/minio-go, chosen in the 2026-10 shortlist (recommendation A).
+# minio is the clean/negative-control target: brokenTotal=0 must open no issue.
 minio/minio-go
+
+# Positive targets proven by manual dispatch on 2026-10-15:
+#   bulletphysics/bullet3  -> issue #3 (2 dead refs, travis-ci.org)
+#   nocodb/nocodb          -> issue #4 (4 dead refs, travis-ci.org + reporoster)
+# The scheduled Mon+Thu 06:17Z run now carries real signal; open_docs_rot_issues
+# dedups against existing open docs-rot issues, so these are scanned twice a
+# week but only open a new issue once the previous one is closed.
+bulletphysics/bullet3
+nocodb/nocodb
