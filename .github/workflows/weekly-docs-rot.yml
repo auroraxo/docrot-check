@@ -74,7 +74,7 @@ jobs:
           upload-report: "false"
           fail-on-broken: "false"
 
-      - name: Stamp target into report
+      - name: Stamp target into report and rename per-target
         env:
           TARGET: ${{ matrix.repo }}
         run: |
@@ -83,17 +83,24 @@ jobs:
           import json, os
           r = json.load(open("report.json"))
           r["target"] = os.environ["TARGET"]
-          json.dump(r, open("report.json", "w"), indent=1)
-          print("target=%s brokenTotal=%s" % (r["target"], r.get("brokenTotal")))
+          # Unique filename per target: download-artifact merge-multiple
+          # overwrites same-named files, so a shared "report.json" would
+          # leave decide with only ONE of N targets' reports.
+          sha = os.environ["TARGET"].replace("/", "-")
+          out = "report-%s.json" % sha
+          with open(out, "w") as fh:
+              json.dump(r, fh, indent=1)
+          os.remove("report.json")
+          print("target=%s brokenTotal=%s file=%s" % (r["target"], r.get("brokenTotal"), out))
           PY
 
       # Artifact names cannot contain "/", so key on job index; the report
-      # itself carries the target field.
+      # itself carries the target field and a per-target filename.
       - name: Upload report
         uses: actions/upload-artifact@v4
         with:
           name: docrot-report-${{ strategy.job-index }}
-          path: report.json
+          path: report-*.json
           if-no-files-found: error
 
   decide:
@@ -111,6 +118,23 @@ jobs:
           pattern: docrot-report-*
           merge-multiple: true
           path: reports
+
+      # One report per planned target. Fewer means the merge dropped reports
+      # (same-filename overwrite) or a scan leg uploaded nothing — decide must
+      # fail loudly rather than silently process a subset of the targets.
+      - name: Verify all target reports present
+        env:
+          EXPECTED: ${{ needs.plan.outputs.repos }}
+        run: |
+          set -euo pipefail
+          count="$(ls reports/report-*.json 2>/dev/null | wc -l | tr -d ' ')"
+          expected="$(printf '%s' "$EXPECTED" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+          echo "reports=$count expected=$expected"
+          if [ "$count" -ne "$expected" ]; then
+            echo "expected $expected report(s), got $count" >&2
+            ls -la reports/ >&2 || true
+            exit 1
+          fi
 
       - name: Open issues for targets with new rot
         env:
