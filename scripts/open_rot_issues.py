@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -105,14 +106,27 @@ def main():
             continue
         body = build_body(report, run_id)
         title = build_title(target, broken)
-        # Quiet pre-check so we never log a token.
-        out = gh([
-            "issue", "create",
-            "--repo", os.environ.get("GH_REPO", "auroraxo/docrot-check"),
-            "--title", title,
-            "--body", body,
-            "--label", "docs-rot",
-        ])
+        # Body can be large (raw report embedded). Linux exec caps a single
+        # argv string at MAX_ARG_STRLEN (~128KiB); `gh issue create --body`
+        # would die with E2BIG ("Argument list too long") and fail the decide
+        # job after the scan succeeded. Pass the body via a temp file instead:
+        # --body-file streams it from gh's own file read, no argv limit.
+        if len(body.encode()) > 100_000:
+            print(f"warn: {target} body {len(body.encode())} bytes (large report)", file=sys.stderr)
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as tf:
+            tf.write(body)
+            body_path = tf.name
+        try:
+            # Quiet pre-check so we never log a token.
+            out = gh([
+                "issue", "create",
+                "--repo", os.environ.get("GH_REPO", "auroraxo/docrot-check"),
+                "--title", title,
+                "--body-file", body_path,
+                "--label", "docs-rot",
+            ])
+        finally:
+            Path(body_path).unlink(missing_ok=True)
         print(f"opened issue for {target} (broken={broken}) -> {out.strip()}")
 
 
