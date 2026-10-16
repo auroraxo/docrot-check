@@ -55,3 +55,42 @@ jobs:
             echo "expected failure, got ${{ steps.check.outcome }}"
             exit 1
           fi
+
+  # Dogfood the IDL-freshness leg on its own fixture. This exists because the
+  # first foreign adoption (auroraxo/staking-options) failed: action.yml invoked
+  # scripts/idl_freshness.py relative to the *caller's* workspace, where the
+  # script does not exist. Any regression in the action_path wiring must fail
+  # CI here before an adopter hits it.
+  idl-self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run docrot-check with IDL freshness (warn mode)
+        id: check
+        uses: ./
+        with:
+          root: testdata/idl-rot
+          report-path: report.json
+          check-idl-freshness: "true"
+          idl-cluster: "mainnet"
+          idl-report-path: idl-report.json
+          upload-report: "false"
+
+      - name: Assert the IDL scan produced a clean report
+        run: |
+          python3 - <<'PY'
+          import json
+          s = json.load(open("idl-report.json"))
+          assert s["scanned"]["rustFiles"] >= 1, s
+          assert s["scanned"]["anchorToml"] >= 1, s
+          assert s["scanned"]["idlJson"] >= 1, s
+          assert len(s["declarations"]) >= 4, s
+          assert len(s["onChain"]) >= 1, s
+          assert s["rotTotal"] == 0, s
+          assert s["unresolvableTotal"] == 0, s
+          print("idl declarations=%d onChain=%d rot=%d" %
+                (len(s["declarations"]), len(s["onChain"]), s["rotTotal"]))
+          PY
+          test "${{ steps.check.outputs.idl-rot-total }}" = "0"
+          test "${{ steps.check.outputs.idl-report-path }}" = "idl-report.json"

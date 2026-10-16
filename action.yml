@@ -99,7 +99,9 @@ runs:
         if [ "${{ inputs.idl-fail-on-rot }}" = "true" ]; then
           idl_args+=(--fail-on-rot)
         fi
-        python3 scripts/idl_freshness.py "${{ inputs.root }}" "${idl_args[@]+"${idl_args[@]}"}"
+        # github.action_path = this action's own checkout; the target repo's
+        # workspace has no scripts/ dir when a foreign repo adopts the action.
+        python3 "${{ github.action_path }}/scripts/idl_freshness.py" "${{ inputs.root }}" "${idl_args[@]+"${idl_args[@]}"}"
         idl_status=$?
         python3 - "${{ inputs.idl-report-path }}" >> "$GITHUB_STEP_SUMMARY" <<'PY'
         import json, sys

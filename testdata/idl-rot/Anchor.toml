@@ -1,0 +1,7 @@
+anchor_version = "0.27.0"
+
+[programs.localnet]
+staking_options = "4yx1NJ4Vqf2zT1oVLk4SySBhhDJXmXFt88ncm4gPxtL7"
+
+[programs.mainnet]
+staking_options = "4yx1NJ4Vqf2zT1oVLk4SySBhhDJXmXFt88ncm4gPxtL7"
