@@ -31,6 +31,20 @@ inputs:
     description: "Upload the JSON report as a workflow artifact named docrot-report."
     default: "true"
 
+outputs:
+  report-path:
+    description: "Path of the image-rot JSON report."
+    value: ${{ steps.scan.outputs.report-path }}
+  broken-total:
+    description: "Number of confirmed broken image references."
+    value: ${{ steps.scan.outputs.broken-total }}
+  idl-report-path:
+    description: "Path of the IDL-freshness JSON report (only when check-idl-freshness is true)."
+    value: ${{ steps.idl.outputs.idl-report-path }}
+  idl-rot-total:
+    description: "Number of confirmed IDL / program-ID rot findings (only when check-idl-freshness is true)."
+    value: ${{ steps.idl.outputs.idl-rot-total }}
+
 runs:
   using: "composite"
   steps:
