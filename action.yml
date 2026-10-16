@@ -12,6 +12,18 @@ inputs:
   fail-on-broken:
     description: "Exit non-zero when a broken reference is found (true) or only report (false)."
     default: "false"
+  check-idl-freshness:
+    description: "Run a Solana program / IDL freshness scan (declare_id!, Anchor.toml, idl/*.json vs on-chain accounts via JSON-RPC)."
+    default: "false"
+  idl-cluster:
+    description: "Solana cluster for the IDL freshness check: 'mainnet', 'devnet', or a full JSON-RPC URL."
+    default: "mainnet"
+  idl-fail-on-rot:
+    description: "Exit non-zero when IDL freshness rot is found (only relevant when check-idl-freshness is true)."
+    default: "false"
+  idl-report-path:
+    description: "Path (relative to the workspace) where the IDL freshness JSON report is written."
+    default: "idl-freshness-report.json"
   report-path:
     description: "Path (relative to the workspace) where the JSON report is written."
     default: "docrot-report.json"
@@ -75,6 +87,57 @@ runs:
           echo "broken-total=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('brokenTotal',0))" "${{ inputs.report-path }}")"
         } >> "$GITHUB_OUTPUT"
         exit $status
+
+    - name: Run IDL freshness scan
+      if: inputs.check-idl-freshness == 'true'
+      id: idl
+      shell: bash
+      run: |
+        set -uo pipefail
+        idl_args=(--cluster "${{ inputs.idl-cluster }}"
+                  --report "${{ inputs.idl-report-path }}")
+        if [ "${{ inputs.idl-fail-on-rot }}" = "true" ]; then
+          idl_args+=(--fail-on-rot)
+        fi
+        python3 scripts/idl_freshness.py "${{ inputs.root }}" "${idl_args[@]+"${idl_args[@]}"}"
+        idl_status=$?
+        python3 - "${{ inputs.idl-report-path }}" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+        import json, sys
+        s = json.load(open(sys.argv[1]))
+        print("")
+        print("## idl-freshness")
+        print("")
+        print("| metric | value |")
+        print("| --- | --- |")
+        print("| cluster | %s |" % s.get("cluster"))
+        for k in ("rustFiles", "anchorToml", "idlJson"):
+            print("| %s scanned | %s |" % (k, s.get("scanned", {}).get(k, 0)))
+        print("| declarations | %s |" % len(s.get("declarations", [])))
+        print("| on-chain checked | %s |" % len(s.get("onChain", [])))
+        print("| rot | %s |" % s.get("rotTotal", 0))
+        print("| unresolvable | %s |" % s.get("unresolvableTotal", 0))
+        for f in s.get("findings", []):
+            loc = f.get("file") or f.get("programId", "?")
+            if f.get("line"):
+                loc = "%s:%s" % (loc, f["line"])
+            print("- `%s` — %s (%s)" % (f["kind"], f["message"], loc))
+        for u in s.get("unresolvable", []):
+            print("- unresolved: %s — %s" % (u.get("programId") or u.get("file"),
+                                            u["reason"]))
+        PY
+        {
+          echo "idl-report-path=${{ inputs.idl-report-path }}"
+          echo "idl-rot-total=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('rotTotal',0))" "${{ inputs.idl-report-path }}")"
+        } >> "$GITHUB_OUTPUT"
+        exit $idl_status
+
+    - name: Upload IDL freshness report
+      if: inputs.check-idl-freshness == 'true' && inputs.upload-report == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: idl-freshness-report
+        path: ${{ inputs.idl-report-path }}
+        if-no-files-found: ignore
 
     - name: Upload report
       if: inputs.upload-report == 'true'
